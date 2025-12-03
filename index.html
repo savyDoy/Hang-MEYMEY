@@ -1,0 +1,1311 @@
+<!DOCTYPE html>
+<html lang="km">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ហាងអនឡាញ Meymey - ការរចនាបែបទំនើប</title>
+    <!-- Favicon for a polished look -->
+    <link rel="icon" href="https://placehold.co/16x16/4f46e5/ffffff?text=M" type="image/png">
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Load Inter Font (Good for Latin and handles Khmer Unicode fallback well) -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+    <!-- Load PDF Libraries -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
+    <!-- Tailwind Config for Custom Colors -->
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'primary-accent': '#4f46e5', // Indigo-600
+                        'secondary-accent': '#14b8a6', // Teal-500
+                        'background-light': '#f9fafb', // Gray-50
+                    },
+                    fontFamily: {
+                        // Prioritize Inter, but allow system fonts to handle Khmer script beautifully
+                        sans: ['Inter', 'Noto Sans Khmer', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+    
+    <!-- Load Firebase (ALL JAVASCRIPT LOGIC REMAINS IDENTICAL TO PREVIOUS VERSION) -->
+    <script type="module">
+        import { initializeApp, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, getDoc, setDoc, addDoc, onSnapshot, collection, query, where, serverTimestamp, updateDoc, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // --- Global Variables (Provided by Canvas Environment) ---
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        // --- Robustly parse Firebase config ---
+        let firebaseConfig = {};
+        let useFirestore = false;
+        try {
+            if (typeof __firebase_config !== 'undefined') {
+                 if (typeof __firebase_config === 'string') {
+                    firebaseConfig = JSON.parse(__firebase_config);
+                 } else {
+                    firebaseConfig = __firebase_config;
+                 }
+                 if (firebaseConfig && firebaseConfig.projectId) {
+                    useFirestore = true;
+                 } else {
+                    throw new Error("Parsed config is missing projectId.");
+                 }
+            } else {
+                throw new Error("__firebase_config is undefined.");
+            }
+        } catch (e) {
+            console.warn("Firebase config is invalid or missing. Using In-Memory Fallback. Data will NOT persist.", e.message);
+            useFirestore = false;
+        }
+
+        // --- Telegram Configuration (REPLACE THESE PLACEHOLDERS) ---
+        const TELEGRAM_BOT_TOKEN = 'YOUR_VALID_TELEGRAM_BOT_TOKEN_HERE'; 
+        const TELEGRAM_CHAT_ID = 'YOUR_VALID_TELEGRAM_CHAT_ID_HERE';
+
+        // --- App State (Centralized for both Firestore and In-Memory) ---
+        let app, db, auth;
+        let userId = crypto.randomUUID(); 
+        let isAuthReady = !useFirestore; 
+        
+        let products = [];
+        let cart = [];
+        let orders = [];
+        
+        window.uploadedReceiptFile = null;
+
+        // --- Seed Data (Translated to Khmer) ---
+        const initialProducts = [
+            { id: 'prod1', name: 'អាវយឺតកប្បាសប្រណិត', price: 15.00, size: 'M', color: 'ខៀវរាត្រី', image: 'https://placehold.co/100x100/38bdf8/ffffff?text=Tshirt', description: 'អាវយឺតដ៏ស្រួលពាក់ និងសមល្មម ធ្វើពីកប្បាសធម្មជាតិ ១០០%។ ល្អឥតខ្ចោះសម្រាប់ពាក់ប្រចាំថ្ងៃ ជាមួយនឹងវាយនភាពក្រណាត់ល្អិត។', details: ['កមូល', 'ដៃខ្លី', 'អាចបោកដោយម៉ាស៊ីននៅសីតុណ្ហភាព ៣០°C', 'ប្រភពអេកូឡូស៊ី'] },
+            { id: 'prod2', name: 'ខោខៅប៊យខាប៊ូយរាងស្លីម', price: 49.99, size: 'L', color: 'ខៀវបុរាណ', image: 'https://placehold.co/100x100/16a34a/ffffff?text=Jeans', description: 'ខោខៅប៊យរាងស្លីមបែបសម័យទំនើប ជាមួយនឹងការយឺតបន្តិចដើម្បីភាពស្រួលពេញមួយថ្ងៃ។ រចនាប័ទ្មហោប៉ៅ ៥ បែបបុរាណ និងមានការរចនាបែបដាច់រហែកបន្តិច។', details: ['កប្បាស ៩៨% និងអេឡាស្ទីន ២%', 'រាងស្លីមតាមត្រគាក និងភ្លៅ', 'ប៊ូតុង', 'ពណ៌មិនងាយរសាត់', 'បាតខោមិនដេរ'] },
+            { id: 'prod3', name: 'អាវយឺតមានមួករោមចៀមបែបទីក្រុង', price: 65.00, size: 'XL', color: 'ប្រផេះអវកាស', image: 'https://placehold.co/100x100/f97316/ffffff?text=Hoodie', description: 'អាវយឺតមានមួករោមចៀមទម្ងន់ធ្ងន់ ដែលត្រូវបានរចនាឡើងសម្រាប់ភាពកក់ក្តៅ និងប្រើប្រាស់បានយូរអង្វែងបំផុត។ មានរូបសញ្ញាដេរភ្ជាប់តូចបំផុតនៅលើដើមទ្រូង។', details: ['រោមចៀមដុសធ្មែញពិសេស', 'ហោប៉ៅកង់ហ្គូរូ', 'ដៃអាវ និងគែមមានខ្សែយឺត', 'ថ្នេរដេរពីរដង', 'មួកធំទូលាយ'] },
+             { id: 'prod4', name: 'អាវយឺតកប្បាសប្រណិត', price: 15.00, size: 'M', color: 'ខៀវរាត្រី', image: 'https://placehold.co/100x100/38bdf8/ffffff?text=Tshirt', description: 'អាវយឺតដ៏ស្រួលពាក់ និងសមល្មម ធ្វើពីកប្បាសធម្មជាតិ ១០០%។ ល្អឥតខ្ចោះសម្រាប់ពាក់ប្រចាំថ្ងៃ ជាមួយនឹងវាយនភាពក្រណាត់ល្អិត។', details: ['កមូល', 'ដៃខ្លី', 'អាចបោកដោយម៉ាស៊ីននៅសីតុណ្ហភាព ៣០°C', 'ប្រភពអេកូឡូស៊ី'] },
+            { id: 'prod5', name: 'ខោខៅប៊យខាប៊ូយរាងស្លីម', price: 49.99, size: 'L', color: 'ខៀវបុរាណ', image: 'https://placehold.co/100x100/16a34a/ffffff?text=Jeans', description: 'ខោខៅប៊យរាងស្លីមបែបសម័យទំនើប ជាមួយនឹងការយឺតបន្តិចដើម្បីភាពស្រួលពេញមួយថ្ងៃ។ រចនាប័ទ្មហោប៉ៅ ៥ បែបបុរាណ និងមានការរចនាបែបដាច់រហែកបន្តិច។', details: ['កប្បាស ៩៨% និងអេឡាស្ទីន ២%', 'រាងស្លីមតាមត្រគាក និងភ្លៅ', 'ប៊ូតុង', 'ពណ៌មិនងាយរសាត់', 'បាតខោមិនដេរ'] },
+            { id: 'prod6', name: 'អាវយឺតមានមួករោមចៀមបែបទីក្រុង', price: 65.00, size: 'XL', color: 'ប្រផេះអវកាស', image: 'https://placehold.co/100x100/f97316/ffffff?text=Hoodie', description: 'អាវយឺតមានមួករោមចៀមទម្ងន់ធ្ងន់ ដែលត្រូវបានរចនាឡើងសម្រាប់ភាពកក់ក្តៅ និងប្រើប្រាស់បានយូរអង្វែងបំផុត។ មានរូបសញ្ញាដេរភ្ជាប់តូចបំផុតនៅលើដើមទ្រូង។', details: ['រោមចៀមដុសធ្មែញពិសេស', 'ហោប៉ៅកង់ហ្គូរូ', 'ដៃអាវ និងគែមមានខ្សែយឺត', 'ថ្នេរដេរពីរដង', 'មួកធំទូលាយ'] },
+             { id: 'prod7', name: 'អាវយឺតកប្បាសប្រណិត', price: 15.00, size: 'M', color: 'ខៀវរាត្រី', image: 'https://placehold.co/100x100/38bdf8/ffffff?text=Tshirt', description: 'អាវយឺតដ៏ស្រួលពាក់ និងសមល្មម ធ្វើពីកប្បាសធម្មជាតិ ១០០%។ ល្អឥតខ្ចោះសម្រាប់ពាក់ប្រចាំថ្ងៃ ជាមួយនឹងវាយនភាពក្រណាត់ល្អិត។', details: ['កមូល', 'ដៃខ្លី', 'អាចបោកដោយម៉ាស៊ីននៅសីតុណ្ហភាព ៣០°C', 'ប្រភពអេកូឡូស៊ី'] },
+            { id: 'prod8', name: 'ខោខៅប៊យខាប៊ូយរាងស្លីម', price: 49.99, size: 'L', color: 'ខៀវបុរាណ', image: 'https://placehold.co/100x100/16a34a/ffffff?text=Jeans', description: 'ខោខៅប៊យរាងស្លីមបែបសម័យទំនើប ជាមួយនឹងការយឺតបន្តិចដើម្បីភាពស្រួលពេញមួយថ្ងៃ។ រចនាប័ទ្មហោប៉ៅ ៥ បែបបុរាណ និងមានការរចនាបែបដាច់រហែកបន្តិច។', details: ['កប្បាស ៩៨% និងអេឡាស្ទីន ២%', 'រាងស្លីមតាមត្រគាក និងភ្លៅ', 'ប៊ូតុង', 'ពណ៌មិនងាយរសាត់', 'បាតខោមិនដេរ'] },
+            { id: 'prod9', name: 'អាវយឺតមានមួករោមចៀមបែបទីក្រុង', price: 65.00, size: 'XL', color: 'ប្រផេះអវកាស', image: 'https://placehold.co/100x100/f97316/ffffff?text=Hoodie', description: 'អាវយឺតមានមួករោមចៀមទម្ងន់ធ្ងន់ ដែលត្រូវបានរចនាឡើងសម្រាប់ភាពកក់ក្តៅ និងប្រើប្រាស់បានយូរអង្វែងបំផុត។ មានរូបសញ្ញាដេរភ្ជាប់តូចបំផុតនៅលើដើមទ្រូង។', details: ['រោមចៀមដុសធ្មែញពិសេស', 'ហោប៉ៅកង់ហ្គូរូ', 'ដៃអាវ និងគែមមានខ្សែយឺត', 'ថ្នេរដេរពីរដង', 'មួកធំទូលាយ'] },
+             { id: 'prod10', name: 'អាវយឺតកប្បាសប្រណិត', price: 15.00, size: 'M', color: 'ខៀវរាត្រី', image: 'https://placehold.co/100x100/38bdf8/ffffff?text=Tshirt', description: 'អាវយឺតដ៏ស្រួលពាក់ និងសមល្មម ធ្វើពីកប្បាសធម្មជាតិ ១០០%។ ល្អឥតខ្ចោះសម្រាប់ពាក់ប្រចាំថ្ងៃ ជាមួយនឹងវាយនភាពក្រណាត់ល្អិត។', details: ['កមូល', 'ដៃខ្លី', 'អាចបោកដោយម៉ាស៊ីននៅសីតុណ្ហភាព ៣០°C', 'ប្រភពអេកូឡូស៊ី'] },
+            { id: 'prod11', name: 'ខោខៅប៊យខាប៊ូយរាងស្លីម', price: 49.99, size: 'L', color: 'ខៀវបុរាណ', image: 'https://placehold.co/100x100/16a34a/ffffff?text=Jeans', description: 'ខោខៅប៊យរាងស្លីមបែបសម័យទំនើប ជាមួយនឹងការយឺតបន្តិចដើម្បីភាពស្រួលពេញមួយថ្ងៃ។ រចនាប័ទ្មហោប៉ៅ ៥ បែបបុរាណ និងមានការរចនាបែបដាច់រហែកបន្តិច។', details: ['កប្បាស ៩៨% និងអេឡាស្ទីន ២%', 'រាងស្លីមតាមត្រគាក និងភ្លៅ', 'ប៊ូតុង', 'ពណ៌មិនងាយរសាត់', 'បាតខោមិនដេរ'] },
+            { id: 'prod12', name: 'អាវយឺតមានមួករោមចៀមបែបទីក្រុង', price: 65.00, size: 'XL', color: 'ប្រផេះអវកាស', image: 'https://placehold.co/100x100/f97316/ffffff?text=Hoodie', description: 'អាវយឺតមានមួករោមចៀមទម្ងន់ធ្ងន់ ដែលត្រូវបានរចនាឡើងសម្រាប់ភាពកក់ក្តៅ និងប្រើប្រាស់បានយូរអង្វែងបំផុត។ មានរូបសញ្ញាដេរភ្ជាប់តូចបំផុតនៅលើដើមទ្រូង។', details: ['រោមចៀមដុសធ្មែញពិសេស', 'ហោប៉ៅកង់ហ្គូរូ', 'ដៃអាវ និងគែមមានខ្សែយឺត', 'ថ្នេរដេរពីរដង', 'មួកធំទូលាយ'] },
+             { id: 'prod13', name: 'អាវយឺតកប្បាសប្រណិត', price: 15.00, size: 'M', color: 'ខៀវរាត្រី', image: 'https://placehold.co/100x100/38bdf8/ffffff?text=Tshirt', description: 'អាវយឺតដ៏ស្រួលពាក់ និងសមល្មម ធ្វើពីកប្បាសធម្មជាតិ ១០០%។ ល្អឥតខ្ចោះសម្រាប់ពាក់ប្រចាំថ្ងៃ ជាមួយនឹងវាយនភាពក្រណាត់ល្អិត។', details: ['កមូល', 'ដៃខ្លី', 'អាចបោកដោយម៉ាស៊ីននៅសីតុណ្ហភាព ៣០°C', 'ប្រភពអេកូឡូស៊ី'] },
+            { id: 'prod14', name: 'ខោខៅប៊យខាប៊ូយរាងស្លីម', price: 49.99, size: 'L', color: 'ខៀវបុរាណ', image: 'https://placehold.co/100x100/16a34a/ffffff?text=Jeans', description: 'ខោខៅប៊យរាងស្លីមបែបសម័យទំនើប ជាមួយនឹងការយឺតបន្តិចដើម្បីភាពស្រួលពេញមួយថ្ងៃ។ រចនាប័ទ្មហោប៉ៅ ៥ បែបបុរាណ និងមានការរចនាបែបដាច់រហែកបន្តិច។', details: ['កប្បាស ៩៨% និងអេឡាស្ទីន ២%', 'រាងស្លីមតាមត្រគាក និងភ្លៅ', 'ប៊ូតុង', 'ពណ៌មិនងាយរសាត់', 'បាតខោមិនដេរ'] },
+            { id: 'prod15', name: 'អាវយឺតមានមួករោមចៀមបែបទីក្រុង', price: 65.00, size: 'XL', color: 'ប្រផេះអវកាស', image: 'https://placehold.co/100x100/f97316/ffffff?text=Hoodie', description: 'អាវយឺតមានមួករោមចៀមទម្ងន់ធ្ងន់ ដែលត្រូវបានរចនាឡើងសម្រាប់ភាពកក់ក្តៅ និងប្រើប្រាស់បានយូរអង្វែងបំផុត។ មានរូបសញ្ញាដេរភ្ជាប់តូចបំផុតនៅលើដើមទ្រូង។', details: ['រោមចៀមដុសធ្មែញពិសេស', 'ហោប៉ៅកង់ហ្គូរូ', 'ដៃអាវ និងគែមមានខ្សែយឺត', 'ថ្នេរដេរពីរដង', 'មួកធំទូលាយ'] },
+             { id: 'prod16', name: 'អាវយឺតកប្បាសប្រណិត', price: 15.00, size: 'M', color: 'ខៀវរាត្រី', image: 'https://placehold.co/100x100/38bdf8/ffffff?text=Tshirt', description: 'អាវយឺតដ៏ស្រួលពាក់ និងសមល្មម ធ្វើពីកប្បាសធម្មជាតិ ១០០%។ ល្អឥតខ្ចោះសម្រាប់ពាក់ប្រចាំថ្ងៃ ជាមួយនឹងវាយនភាពក្រណាត់ល្អិត។', details: ['កមូល', 'ដៃខ្លី', 'អាចបោកដោយម៉ាស៊ីននៅសីតុណ្ហភាព ៣០°C', 'ប្រភពអេកូឡូស៊ី'] },
+            { id: 'prod17', name: 'ខោខៅប៊យខាប៊ូយរាងស្លីម', price: 49.99, size: 'L', color: 'ខៀវបុរាណ', image: 'https://placehold.co/100x100/16a34a/ffffff?text=Jeans', description: 'ខោខៅប៊យរាងស្លីមបែបសម័យទំនើប ជាមួយនឹងការយឺតបន្តិចដើម្បីភាពស្រួលពេញមួយថ្ងៃ។ រចនាប័ទ្មហោប៉ៅ ៥ បែបបុរាណ និងមានការរចនាបែបដាច់រហែកបន្តិច។', details: ['កប្បាស ៩៨% និងអេឡាស្ទីន ២%', 'រាងស្លីមតាមត្រគាក និងភ្លៅ', 'ប៊ូតុង', 'ពណ៌មិនងាយរសាត់', 'បាតខោមិនដេរ'] },
+            { id: 'prod18', name: 'អាវយឺតមានមួករោមចៀមបែបទីក្រុង', price: 65.00, size: 'XL', color: 'ប្រផេះអវកាស', image: 'https://placehold.co/100x100/f97316/ffffff?text=Hoodie', description: 'អាវយឺតមានមួករោមចៀមទម្ងន់ធ្ងន់ ដែលត្រូវបានរចនាឡើងសម្រាប់ភាពកក់ក្តៅ និងប្រើប្រាស់បានយូរអង្វែងបំផុត។ មានរូបសញ្ញាដេរភ្ជាប់តូចបំផុតនៅលើដើមទ្រូង។', details: ['រោមចៀមដុសធ្មែញពិសេស', 'ហោប៉ៅកង់ហ្គូរូ', 'ដៃអាវ និងគែមមានខ្សែយឺត', 'ថ្នេរដេរពីរដង', 'មួកធំទូលាយ'] },
+
+        ];
+        
+        // --- Utility Functions ---
+
+        const fetchWithRetry = async (url, options = {}, maxRetries = 5) => {
+            for (let i = 0; i < maxRetries; i++) {
+                try {
+                    const response = await fetch(url, options);
+                    if (!response.ok) {
+                        if (response.status === 401) {
+                            throw new Error(`HTTP error! status: 401. Telegram Bot Token (or chat ID) is likely incorrect or invalid.`);
+                        }
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    return response;
+                } catch (error) {
+                    if (i < maxRetries - 1) {
+                        const delay = Math.pow(2, i) * 1000;
+                        await new Promise(resolve => setTimeout(resolve, delay));
+                    } else {
+                        console.error("Fetch failed after max retries:", error);
+                        throw error;
+                    }
+                }
+            }
+        };
+        
+        const showNotification = (message, type = 'info') => {
+            const notif = document.getElementById('app-notification');
+            if (!notif) return;
+
+            const color = {
+                'info': 'bg-blue-600', 'success': 'bg-secondary-accent', 'warning': 'bg-yellow-600', 'error': 'bg-red-600'
+            }[type];
+
+            notif.textContent = message;
+            // Clear previous colors and apply new ones
+            notif.className = `fixed bottom-4 right-4 p-4 rounded-xl shadow-2xl text-white z-50 transition-transform duration-300 transform translate-y-0 ${color}`;
+
+            setTimeout(() => {
+                notif.classList.add('translate-y-20');
+                // Re-add hidden state after transition for clean removal
+                setTimeout(() => {
+                    // Reset to default class for next use
+                    notif.className = `fixed bottom-4 right-4 p-4 rounded-xl shadow-2xl text-white z-50 transition-transform duration-300 transform translate-y-20`;
+                }, 300); 
+            }, 5000);
+        };
+
+        const getOrderDate = (timestamp) => {
+            if (!timestamp) return new Date();
+            if (typeof timestamp.toDate === 'function') {
+                return timestamp.toDate();
+            }
+            if (timestamp instanceof Date) {
+                return timestamp;
+            }
+            return new Date();
+        };
+
+        // --- Fallback In-Memory Functions (Used if useFirestore is false) ---
+
+        const loadInitialState = () => {
+            products = JSON.parse(JSON.stringify(initialProducts)); 
+            cart = [];
+            orders = [];
+            renderProducts();
+            renderCart();
+            renderOrders();
+        }
+
+        const fallbackUpdateCart = (newCart) => {
+            cart = newCart;
+            renderCart();
+        }
+        
+        const fallbackAddOrder = (newOrder) => {
+            newOrder.id = `mem_${crypto.randomUUID().substring(0, 8)}`;
+            newOrder.timestamp = new Date();
+            orders.unshift(newOrder); 
+            cart = [];
+            renderCart();
+            renderOrders();
+            return newOrder.id;
+        }
+
+        const fallbackUpdateOrder = (orderId, updates) => {
+            const index = orders.findIndex(o => o.id === orderId);
+            if (index > -1) {
+                orders[index] = { ...orders[index], ...updates };
+                if (updates.paymentTime) {
+                    orders[index].paymentTime = new Date();
+                }
+                renderOrders();
+                return orders[index];
+            }
+            return null;
+        }
+        
+        const fallbackFetchOrder = (orderId) => {
+            return orders.find(o => o.id === orderId);
+        }
+
+        // --- Firebase Setup & Auth ---
+        window.initFirebase = async () => {
+            if (!useFirestore) {
+                loadInitialState();
+                showNotification("កំពុងដំណើរការក្នុងរបៀបក្រៅបណ្តាញ (In-Memory). ទិន្នន័យនឹងមិនត្រូវបានរក្សាទុកទេ។", 'warning');
+                return;
+            }
+            
+            try {
+                app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+
+                if (initialAuthToken) {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                } else {
+                    await signInAnonymously(auth);
+                }
+
+                onAuthStateChanged(auth, (user) => {
+                    if (user) {
+                        userId = user.uid;
+                        console.log(`Authenticated User ID: ${userId}`); 
+                    } else {
+                        userId = crypto.randomUUID(); 
+                        console.log(`Anonymous User ID: ${userId}`);
+                    }
+                    isAuthReady = true;
+                    setupListeners();
+                });
+
+            } catch (error) {
+                console.error("Firebase Initialization Error:", error);
+                loadInitialState();
+                showNotification(`កំហុសក្នុងការចាប់ផ្ដើម Firebase: ${error.message}។ កំពុងដំណើរការ In-Memory.`, 'error');
+            }
+        };
+
+        // --- Firestore Listeners ---
+
+        const getPublicCollectionPath = (name) => `/artifacts/${appId}/public/data/${name}`;
+        const getPrivateCollectionPath = (name) => `/artifacts/${appId}/users/${userId}/${name}`;
+
+        const setupListeners = () => {
+            if (!isAuthReady || !userId || !useFirestore) return;
+
+            const productsColRef = collection(db, getPublicCollectionPath('products'));
+            onSnapshot(productsColRef, (snapshot) => {
+                products = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                renderProducts();
+            }, (error) => {
+                console.error("Error fetching products:", error);
+                seedInitialProducts(); 
+            });
+
+            const cartDocRef = doc(db, getPrivateCollectionPath('cart'), 'current');
+            onSnapshot(cartDocRef, (docSnap) => {
+                cart = docSnap.exists() && docSnap.data().items ? docSnap.data().items : [];
+                renderCart();
+            }, (error) => {
+                console.error("Error fetching cart:", error);
+                if (error.code === 'permission-denied') {
+                    setDoc(cartDocRef, { items: [] }, { merge: true }).catch(err => console.error("Error initializing cart:", err));
+                }
+            });
+
+            const ordersColRef = query(collection(db, getPublicCollectionPath('orders')), where('userId', '==', userId));
+            onSnapshot(ordersColRef, (snapshot) => {
+                orders = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a, b) => {
+                    const dateA = getOrderDate(a.timestamp).getTime();
+                    const dateB = getOrderDate(b.timestamp).getTime();
+                    return dateB - dateA;
+                });
+                renderOrders();
+            }, (error) => {
+                console.error("Error fetching orders:", error);
+            });
+
+            seedInitialProducts();
+        };
+
+        const seedInitialProducts = async () => {
+             if (!useFirestore) return; 
+             const productsColRef = collection(db, getPublicCollectionPath('products'));
+             
+             // Use an English name for robust seeding check
+             const q = query(productsColRef, where('name', '==', 'អាវយឺតកប្បាសប្រណិត'));
+             const snapshot = await getDocs(q); 
+
+             if (snapshot.empty) {
+                console.log("Seeding initial products...");
+                await Promise.all(initialProducts.map((p, index) =>
+                    addDoc(productsColRef, p)
+                ));
+            }
+        }
+
+        // --- Cart Management Functions ---
+        
+        window.addToCart = async (productId) => {
+            if (!isAuthReady) {
+                showNotification('សូមរង់ចាំការចាប់ផ្ដើមបញ្ចប់។', 'warning');
+                return;
+            }
+            const product = products.find(p => p.id === productId);
+            if (!product) return;
+
+            const existingItemIndex = cart.findIndex(item => item.id === productId);
+            let newCart;
+
+            if (existingItemIndex > -1) {
+                newCart = [...cart];
+                newCart[existingItemIndex].quantity += 1;
+            } else {
+                newCart = [...cart, { ...product, quantity: 1 }];
+            }
+
+            if (useFirestore) {
+                const cartDocRef = doc(db, getPrivateCollectionPath('cart'), 'current');
+                await setDoc(cartDocRef, { items: newCart })
+                    .then(() => showNotification(`បានបន្ថែម ${product.name} ទៅក្នុងរទេះ!`, 'success'))
+                    .catch(error => {
+                        console.error("Error updating cart:", error);
+                        showNotification('បរាជ័យក្នុងការបន្ថែមទៅរទេះ។', 'error');
+                    });
+            } else {
+                fallbackUpdateCart(newCart);
+                showNotification(`បានបន្ថែម ${product.name} ទៅក្នុងរទេះ! (In-Memory)`, 'success');
+            }
+        };
+
+        
+        window.updateCartItem = async (productId, delta) => {
+            if (!isAuthReady) {
+                showNotification('ការចាប់ផ្ដើមមិនទាន់រួចរាល់ទេ។', 'warning');
+                return;
+            }
+            const existingItemIndex = cart.findIndex(item => item.id === productId);
+            if (existingItemIndex === -1) return;
+
+            let newCart = [...cart];
+            newCart[existingItemIndex].quantity += delta;
+
+            if (newCart[existingItemIndex].quantity <= 0) {
+                newCart = newCart.filter(item => item.id !== productId);
+            }
+
+            if (useFirestore) {
+                const cartDocRef = doc(db, getPrivateCollectionPath('cart'), 'current');
+                await setDoc(cartDocRef, { items: newCart })
+                 .catch(error => {
+                        console.error("Error updating cart item:", error);
+                        showNotification('បរាជ័យក្នុងការធ្វើបច្ចុប្បន្នភាពចំនួនទំនិញក្នុងរទេះ។', 'error');
+                    });
+            } else {
+                 fallbackUpdateCart(newCart);
+            }
+        };
+        
+        window.showCartView = () => {
+             window.setActiveView('cart-view');
+        }
+        
+        // --- Product Detail Page View Functions ---
+        window.showProductDetails = (productId) => {
+            const product = products.find(p => p.id === productId);
+            if (!product) {
+                showNotification('មិនឃើញព័ត៌មានលម្អិតនៃផលិតផលទេ។', 'error');
+                return;
+            }
+
+            window.setActiveView('product-details-page'); // Switch to the new page view
+
+            const contentArea = document.getElementById('product-details-content');
+
+            if (!contentArea) return;
+
+            const detailsList = product.details ? product.details.map(d => `<li class="flex items-start text-gray-700"><svg class="w-4 h-4 mt-1 mr-2 text-secondary-accent flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"></path></svg><span class="text-base">${d}</span></li>`).join('') : '';
+
+            contentArea.innerHTML = `
+                <div class="md:flex h-full">
+                    <!-- Image Area -->
+                    <div class="md:w-1/2 p-4 flex flex-shrink-0 justify-center items-center bg-gray-100 md:rounded-l-xl rounded-t-xl md:rounded-tr-none">
+                        <img src="${product.image}" alt="${product.name}" onerror="this.onerror=null;this.src='https://placehold.co/400x400/e5e7eb/4b5563?text=N/A+Product+Image';" class="w-full max-w-md h-auto rounded-lg shadow-2xl object-contain">
+                    </div>
+
+                    <!-- Details Area -->
+                    <div class="md:w-1/2 p-6 md:p-8 space-y-6 overflow-y-auto">
+                        <h3 class="text-3xl md:text-4xl font-extrabold text-gray-900">${product.name}</h3>
+
+                        <p class="text-4xl font-black text-primary-accent border-b pb-4">\$${product.price.toFixed(2)}</p>
+
+                        <p class="text-gray-600 text-lg">${product.description}</p>
+
+                        <!-- Specifications -->
+                        <div class="pt-4 border-t border-gray-200">
+                            <h4 class="font-extrabold text-xl text-gray-800 mb-2">លក្ខណៈពិសេស</h4>
+                            <ul class="list-none space-y-1">
+                                <li class="flex justify-between border-b border-dashed py-1">
+                                    <span class="font-medium text-gray-600">ពណ៌:</span>
+                                    <span class="font-semibold text-gray-800">${product.color}</span>
+                                </li>
+                                <li class="flex justify-between border-b border-dashed py-1">
+                                    <span class="font-medium text-gray-600">ទំហំ:</span>
+                                    <span class="font-semibold text-gray-800">${product.size}</span>
+                                </li>
+                            </ul>
+                        </div>
+
+                        <!-- Features -->
+                        ${detailsList ? `
+                        <div class="pt-4 border-t border-gray-200">
+                            <h4 class="font-extrabold text-xl text-gray-800 mb-2">លក្ខណៈ​សំខាន់ៗ</h4>
+                            <ul class="list-none space-y-2">
+                                ${detailsList}
+                            </ul>
+                        </div>
+                        ` : ''}
+
+                        <!-- Add to Cart Button -->
+                        <button onclick="window.addToCart('${product.id}');" class="w-full bg-secondary-accent hover:bg-teal-600 text-white font-bold py-4 px-4 rounded-full shadow-lg transition duration-300 flex items-center justify-center mt-8 uppercase tracking-wider text-lg">
+                            <svg class="w-6 h-6 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z"></path></svg>
+                            បន្ថែមចូលរទេះ (x1)
+                        </button>
+                        
+                        <!-- View Cart Button -->
+                        <button onclick="window.showCartView()" class="w-full bg-primary-accent border border-primary-accent hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-full transition duration-300 flex items-center justify-center mt-4 uppercase tracking-wider text-sm">
+                            <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"></path></svg>
+                            មើលរទេះ
+                        </button>
+                    </div>
+                </div>
+            `;
+        };
+
+        // --- Checkout, Payment & Receipt (The Core 3 Steps) ---
+
+        const sendTelegramNotification = async (orderId, customerName, totalAmount, address) => {
+            if (TELEGRAM_BOT_TOKEN.includes('YOUR_VALID_TELEGRAM_BOT_TOKEN_HERE') || TELEGRAM_CHAT_ID.includes('YOUR_VALID_TELEGRAM_CHAT_ID_HERE')) {
+                console.warn("Telegram notification skipped: Keys missing.");
+                showNotification('ការជូនដំណឹង Telegram ត្រូវបានរំលង (គន្លឹះបាត់).', 'warning');
+                return;
+            }
+
+            const apiBase = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
+
+            let message = `🔔 *ការបញ្ជាទិញថ្មី!* 🔔\nOrder ID: \`${orderId}\`\nCustomer: ${customerName}\nAddress: ${address}\nTotal: \$${totalAmount.toFixed(2)}\nStatus: Awaiting Payment`;
+
+            const encodedMessage = encodeURIComponent(message);
+            const url = `${apiBase}?chat_id=${TELEGRAM_CHAT_ID}&text=${encodedMessage}&parse_mode=Markdown`;
+
+            try {
+                await fetchWithRetry(url);
+                showNotification('បានផ្ញើការជូនដំណឹង Telegram រួចរាល់!', 'info');
+            } catch (error) {
+                console.error('Error sending Telegram notification:', error);
+                if (error.message.includes('401')) {
+                    showNotification('ការជូនដំណឹង Telegram បរាជ័យ: ពិនិត្យ Bot Token/Chat ID.', 'error');
+                } else {
+                    showNotification(`កំហុសភ្ជាប់សម្រាប់ការជូនដំណឹង Telegram: ${error.message}`, 'warning');
+                }
+            }
+        };
+
+        window.handleCheckout = async () => {
+            if (!isAuthReady || cart.length === 0) {
+                showNotification('រទេះទំនិញរបស់អ្នកទទេ ឬការចាប់ផ្ដើមមិនទាន់រួចរាល់។', 'warning');
+                return;
+            }
+
+            const nameInput = document.getElementById('customer-name');
+            const phoneInput = document.getElementById('customer-phone');
+            const addressInput = document.getElementById('customer-address'); 
+
+            if (!nameInput || !phoneInput || !addressInput) {
+                console.error("Missing customer input fields.");
+                showNotification('កំហុសផ្ទៃក្នុង: បាត់វាលទម្រង់។', 'error');
+                return;
+            }
+
+            const name = nameInput.value.trim();
+            const phone = phoneInput.value.trim();
+            const address = addressInput.value.trim(); 
+
+            if (!name || !phone || !address) { 
+                showNotification('សូមបញ្ចូល ឈ្មោះ លេខទូរស័ព្ទ និងអាសយដ្ឋានដឹកជញ្ជូនរបស់អ្នកដើម្បីបន្ត (ជំហានទី ១)។', 'warning');
+                return;
+            }
+
+            const total = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
+
+            const newOrderDB = {
+                userId: userId,
+                customerName: name,
+                customerPhone: phone,
+                customerAddress: address, 
+                items: cart,
+                total: total,
+                status: 'រង់ចាំការទូទាត់ (ជំហានទី ២)', 
+                timestamp: serverTimestamp()
+            };
+
+            let orderId;
+
+            try {
+                if (useFirestore) {
+                    const ordersColRef = collection(db, getPublicCollectionPath('orders'));
+                    const docRef = await addDoc(ordersColRef, newOrderDB);
+                    orderId = docRef.id;
+
+                    const cartDocRef = doc(db, getPrivateCollectionPath('cart'), 'current');
+                    await setDoc(cartDocRef, { items: [] });
+                } else {
+                    orderId = fallbackAddOrder(newOrderDB);
+                }
+                
+                const clientOrder = {
+                    ...newOrderDB,
+                    timestamp: new Date()
+                };
+
+                window.uploadedReceiptFile = null;
+
+                await sendTelegramNotification(orderId, name, total, address);
+
+                showNotification(`បានដាក់ការបញ្ជាទិញ ${orderId} រួចរាល់! បន្តទៅការទូទាត់ (ជំហានទី ២)។`, 'success');
+                window.showPayment(orderId, clientOrder); 
+
+            } catch (error) {
+                console.error("Checkout Failed:", error);
+                showNotification(`ការទូទាត់បរាជ័យ: ${error.message}`, 'error');
+            }
+        };
+
+        window.handleReceiptUpload = (event) => {
+            const file = event.target.files[0];
+            const receiptPreview = document.getElementById('receipt-preview');
+            const uploadStatus = document.getElementById('upload-status');
+            
+            window.uploadedReceiptFile = null;
+            receiptPreview.src = '';
+            receiptPreview.classList.add('hidden');
+
+            if (file) {
+                if (!file.type.startsWith('image/')) {
+                    showNotification('សូមជ្រើសរើសឯកសាររូបភាពដែលមានសុពលភាព (PNG, JPG)។', 'error');
+                    uploadStatus.textContent = 'ប្រភេទឯកសារមិនត្រឹមត្រូវ។';
+                    uploadStatus.classList.replace('text-green-600', 'text-red-600');
+                    return;
+                }
+                
+                window.uploadedReceiptFile = file;
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    receiptPreview.src = e.target.result;
+                    receiptPreview.classList.remove('hidden');
+                };
+                reader.readAsDataURL(file);
+
+                uploadStatus.textContent = `បានផ្ទុករូបភាពវិក្កយបត្រ៖ ${file.name}`;
+                uploadStatus.classList.replace('text-red-600', 'text-green-600');
+            } else {
+                uploadStatus.textContent = 'មិនមានឯកសារត្រូវបានជ្រើសរើសទេ។';
+                uploadStatus.classList.replace('text-green-600', 'text-red-600');
+            }
+        }
+        
+        window.handlePaymentConfirmation = async (orderId) => {
+             if (!isAuthReady) {
+                showNotification('ការចាប់ផ្ដើមមិនទាន់រួចរាល់ទេ។', 'warning');
+                return;
+            }
+            
+            if (!window.uploadedReceiptFile) {
+                showNotification('សូមផ្ទុករូបថតវិក្កយបត្រទូទាត់មុនពេលបញ្ជាក់ការទូទាត់។', 'warning');
+                return;
+            }
+            
+            showNotification('កំពុងដំណើរការបញ្ជាក់ការទូទាត់...', 'info');
+            
+            try {
+                const updates = { 
+                    status: 'ការទូទាត់ត្រូវបានបញ្ជាក់ (ជំហានទី ៣)', 
+                    paymentTime: serverTimestamp(),
+                    receiptFileName: window.uploadedReceiptFile.name 
+                };
+
+                if (useFirestore) {
+                    const orderDocRef = doc(db, getPublicCollectionPath('orders'), orderId);
+                    await updateDoc(orderDocRef, updates);
+                } else {
+                    fallbackUpdateOrder(orderId, updates);
+                }
+
+                window.uploadedReceiptFile = null;
+
+                showNotification(`ការទូទាត់ត្រូវបានបញ្ជាក់សម្រាប់ Order ${orderId}! បង្ហាញវិក្កយបត្រចុងក្រោយ (ជំហានទី ៣)។`, 'success');
+                window.showReceipt(orderId);
+
+            } catch (error) {
+                console.error("Payment Confirmation Failed:", error);
+                showNotification(`ការបញ្ជាក់ការទូទាត់បរាជ័យ: ${error.message}`, 'error');
+            }
+        }
+
+        const fetchOrder = async (orderId, orderData) => {
+             let order = orderData;
+            if (!order) {
+                if (useFirestore) {
+                    const docRef = doc(db, getPublicCollectionPath('orders'), orderId);
+                    const docSnap = await getDoc(docRef);
+                    if (docSnap.exists()) {
+                        order = { id: docSnap.id, ...docSnap.data() };
+                    } else {
+                        showNotification('មិនឃើញការបញ្ជាទិញក្នុង Firestore ទេ។', 'error');
+                        return null;
+                    }
+                } else {
+                    order = fallbackFetchOrder(orderId);
+                    if (!order) {
+                        showNotification('មិនឃើញការបញ្ជាទិញក្នុងអង្គចងចាំទេ។', 'error');
+                        return null;
+                    }
+                }
+            }
+            const idEl = document.getElementById('current-order-id');
+            if (idEl) {
+                idEl.textContent = orderId;
+            }
+            return order;
+        }
+        
+        window.showPayment = async (orderId, orderData = null) => {
+            const order = await fetchOrder(orderId, orderData);
+            if (!order) return;
+
+            window.setActiveView('payment-view');
+            renderPaymentInstructions(order, orderId);
+        }
+
+        window.showReceipt = async (orderId, orderData = null) => {
+            const order = await fetchOrder(orderId, orderData);
+            if (!order) return;
+
+            window.setActiveView('receipt-view');
+            
+            document.getElementById('receipt-download-pdf-btn').setAttribute('onclick', `window.generatePDFInvoice('${orderId}', 'receipt-content')`);
+            
+            renderReceipt(order, orderId);
+        }
+        
+        window.showOrderDetails = async (orderId) => {
+            const order = await fetchOrder(orderId);
+            if (!order) return;
+
+            if (order.status.includes('បញ្ជាក់')) {
+                window.showReceipt(orderId, order);
+            } else {
+                window.showPayment(orderId, order);
+            }
+        }
+        
+        window.generatePDFInvoice = async (orderId, contentElementId) => {
+            showNotification('កំពុងបង្កើតឯកសារ PDF...', 'info');
+            const input = document.getElementById(contentElementId);
+
+            if (!input) {
+                showNotification(`មិនអាចរកឃើញធាតុមាតិកា៖ ${contentElementId} ដើម្បីបង្កើត PDF បានទេ។`, 'error');
+                return;
+            }
+
+            try {
+                const canvas = await html2canvas(input, { 
+                    scale: 2,
+                    useCORS: true 
+                });
+                const imgData = canvas.toDataURL('image/png');
+                
+                const { jsPDF } = window.jspdf;
+                const pdf = new jsPDF('p', 'mm', 'a4');
+                
+                const imgWidth = 210;
+                const pageHeight = 297;
+                const imgHeight = canvas.height * imgWidth / canvas.width;
+                let heightLeft = imgHeight;
+                
+                let position = 0;
+
+                pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
+                heightLeft -= pageHeight;
+
+                while (heightLeft >= 0) {
+                    position = heightLeft - imgHeight;
+                    pdf.addPage();
+                    pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
+                    heightLeft -= pageHeight;
+                }
+                
+                pdf.save(`invoice-${orderId}.pdf`);
+                showNotification(`វិក្កយបត្រ ${orderId} បានទាញយកដោយជោគជ័យ!`, 'success');
+
+            } catch (error) {
+                console.error("PDF generation failed:", error);
+                showNotification('បរាជ័យក្នុងការបង្កើតវិក្កយបត្រ PDF. សូមព្យាយាមម្ដងទៀត។', 'error');
+            }
+        };
+
+
+        // --- UI Rendering Functions ---
+
+        const renderProducts = () => {
+            const productList = document.getElementById('product-list');
+            if (!productList) return;
+
+            productList.innerHTML = products.map(p => `
+                <div onclick="window.showProductDetails('${p.id}')" 
+                     class="bg-white p-4 md:p-6 rounded-2xl shadow-lg flex flex-col items-start transition transform hover:scale-[1.01] cursor-pointer border-2 border-transparent hover:border-primary-accent hover:shadow-xl">
+                    
+                    <!-- Image and Text Block -->
+                    <div class="flex items-start w-full mb-3">
+                        <img src="${p.image}" alt="${p.name}" onerror="this.onerror=null;this.src='https://placehold.co/100x100/e0f2f1/0f766e?text=Item';" class="w-20 h-20 rounded-lg object-cover flex-shrink-0 mr-4 shadow-md">
+                        <div class="flex-grow">
+                            <h3 class="font-extrabold text-xl text-gray-800">${p.name}</h3>
+                            <p class="text-xs text-gray-500 mt-1">${p.size} / ${p.color}</p>
+                        </div>
+                    </div>
+                    
+                    <!-- Price and Button Block (Mobile Optimized) -->
+                    <div class="flex justify-between items-center w-full pt-3 border-t border-gray-100">
+                        <span class="font-black text-2xl text-primary-accent">\$${p.price.toFixed(2)}</span>
+                        
+                        <!-- Cart Button: Use event.stopPropagation() to prevent the parent div's click handler from firing -->
+                        <button onclick="event.stopPropagation(); window.addToCart('${p.id}')" class="bg-secondary-accent hover:bg-teal-600 text-white font-bold py-2 px-4 rounded-full shadow-md transition duration-300 flex items-center text-sm uppercase">
+                            <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z"></path></svg>
+                            បន្ថែម
+                        </button>
+                    </div>
+                </div>
+            `).join('');
+        };
+
+        const renderCart = () => {
+            const cartList = document.getElementById('cart-items');
+            const cartTotalEl = document.getElementById('cart-total');
+            const checkoutButton = document.getElementById('checkout-btn');
+            const cartCountBadge = document.getElementById('cart-count-badge'); 
+            const mobileCartCountBadge = document.getElementById('mobile-cart-count-badge');
+
+            if (!cartList || !cartTotalEl || !checkoutButton || !cartCountBadge || !mobileCartCountBadge) return;
+
+            const total = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
+            const itemCount = cart.reduce((sum, item) => sum + item.quantity, 0); 
+
+            // --- Update Badges ---
+            cartCountBadge.textContent = itemCount;
+            mobileCartCountBadge.textContent = itemCount;
+            
+            const badges = [cartCountBadge, mobileCartCountBadge];
+            badges.forEach(badge => {
+                if (itemCount > 0) {
+                    badge.style.transform = 'scale(1)';
+                } else {
+                    badge.style.transform = 'scale(0)';
+                }
+            });
+            // --- End Update Badges ---
+            
+            cartTotalEl.textContent = `\$${total.toFixed(2)}`;
+            
+            if (cart.length === 0) {
+                cartList.innerHTML = '<div class="text-center text-gray-500 py-6 bg-gray-50 rounded-lg">រទេះទំនិញរបស់អ្នកទទេ។ តើអ្នកចង់បន្ថែមផលិតផលណាមួយទេ?</div>';
+                checkoutButton.disabled = true;
+                checkoutButton.classList.add('opacity-50', 'cursor-not-allowed');
+            } else {
+                checkoutButton.disabled = false;
+                checkoutButton.classList.remove('opacity-50', 'cursor-not-allowed');
+
+                cartList.innerHTML = cart.map(item => `
+                    <li class="flex justify-between items-center py-4 border-b last:border-b-0">
+                        <div class="flex items-center space-x-4 flex-grow">
+                            <img src="${item.image}" alt="${item.name}" onerror="this.onerror=null;this.src='https://placehold.co/60x60/e5e7eb/4b5563?text=N/A';" class="w-12 h-12 rounded object-cover shadow-sm">
+                            <div class="min-w-0 flex-grow">
+                                <span class="font-semibold text-gray-800 truncate">${item.name}</span>
+                                <span class="text-sm text-gray-500 block">\$${item.price.toFixed(2)} ក្នុងមួយ</span>
+                            </div>
+                        </div>
+                        <div class="flex items-center space-x-2 flex-shrink-0">
+                            <button onclick="window.updateCartItem('${item.id}', -1)" class="text-red-500 hover:text-red-700 font-bold w-6 h-6 rounded-full border border-red-300 transition duration-150 transform hover:scale-110 flex items-center justify-center text-lg">-</button>
+                            <span class="font-bold w-6 text-center text-gray-800">${item.quantity}</span>
+                            <button onclick="window.updateCartItem('${item.id}', 1)" class="text-secondary-accent hover:text-teal-600 font-bold w-6 h-6 rounded-full border border-teal-300 transition duration-150 transform hover:scale-110 flex items-center justify-center text-lg">+</button>
+                        </div>
+                    </li>
+                `).join('');
+
+                const checkoutSummary = document.getElementById('checkout-summary');
+                if (checkoutSummary) {
+                     checkoutSummary.innerHTML = cart.map(item => `
+                        <div class="flex justify-between text-sm py-1">
+                            <span class="text-gray-600">${item.name} x ${item.quantity}</span>
+                            <span class="font-medium text-gray-800">\$${(item.price * item.quantity).toFixed(2)}</span>
+                        </div>
+                    `).join('') + `
+                    <div class="flex justify-between font-bold text-lg pt-3 border-t-2 border-dashed mt-3">
+                        <span>តម្លៃសរុប</span>
+                        <span class="text-primary-accent">\$${total.toFixed(2)}</span>
+                    </div>
+                    `;
+                }
+            }
+        };
+
+        const renderOrders = () => {
+            const orderList = document.getElementById('order-list'); 
+            if (!orderList) return;
+
+            const sortedOrders = orders.sort((a, b) => {
+                const dateA = getOrderDate(a.timestamp).getTime();
+                const dateB = getOrderDate(b.timestamp).getTime();
+                return dateB - dateA;
+            });
+
+            if (sortedOrders.length === 0) {
+                orderList.innerHTML = '<div class="text-center text-gray-500 py-6 bg-white rounded-xl shadow-lg">មិនឃើញប្រវត្តិការបញ្ជាទិញទេ។ ចាប់ផ្តើមទិញទំនិញថ្ងៃនេះ!</div>';
+                return;
+            }
+
+            orderList.innerHTML = sortedOrders.map(order => {
+                const date = getOrderDate(order.timestamp).toLocaleDateString('km-KH');
+                const statusClass = order.status.includes('បញ្ជាក់') ? 'bg-green-100 text-green-700 ring-1 ring-green-300' : 'bg-yellow-100 text-yellow-700 ring-1 ring-yellow-300';
+                
+                return `
+                    <li class="bg-white p-5 rounded-xl shadow-md mb-3 flex justify-between items-center cursor-pointer hover:bg-gray-50 transition duration-200 border-l-4 border-primary-accent" onclick="window.showOrderDetails('${order.id}')">
+                        <div class="flex-grow">
+                            <span class="font-extrabold text-lg text-primary-accent block">ការបញ្ជាទិញ #${order.id.substring(0, 8)}...</span>
+                            <p class="text-sm text-gray-600">តម្លៃសរុប: \$${order.total.toFixed(2)} | កាលបរិច្ឆេទ: ${date}</p>
+                        </div>
+                        <span class="px-4 py-1 text-xs font-bold rounded-full ${statusClass} flex-shrink-0">
+                            ${order.status.replace(' (ជំហានទី ៣)', '').replace(' (ជំហានទី ២)', '')}
+                        </span>
+                    </li>
+                `;
+            }).join('');
+        };
+
+        const renderPaymentInstructions = (order, orderId) => {
+            const paymentDetails = document.getElementById('payment-details');
+            if (!paymentDetails) return;
+
+            window.uploadedReceiptFile = null;
+            
+            const safePhone = order.customerPhone.slice(0, 2) + '****-**-' + order.customerPhone.slice(-4);
+            const safeAddress = order.customerAddress.substring(0, 40) + '...';
+
+            paymentDetails.innerHTML = `
+                <div id="payment-content" class="p-6 md:p-8 bg-white rounded-2xl shadow-2xl space-y-6">
+                    <div class="text-center border-b pb-4 border-red-200">
+                        <h3 class="text-3xl font-extrabold text-red-600 tracking-tight">ជំហានទី ២: កំពុងរង់ចាំការទូទាត់</h3>
+                        <p class="text-md text-gray-500">សូមបញ្ចប់ការផ្ទេរសម្រាប់លេខសម្គាល់ការបញ្ជាទិញ: <span class="font-mono text-primary-accent">${orderId}</span></p>
+                    </div>
+                    
+                    <!-- Delivery Info -->
+                    <div class="p-4 bg-indigo-50 rounded-xl border border-indigo-200">
+                        <h4 class="font-bold text-lg text-primary-accent mb-2">សង្ខេបការដឹកជញ្ជូន:</h4>
+                        <div class="grid grid-cols-2 gap-2 text-sm">
+                            <p class="font-medium text-gray-600">អ្នកទទួល:</p>
+                            <p class="text-right font-semibold">${order.customerName}</p>
+                            
+                            <p class="font-medium text-gray-600">ដឹកជញ្ជូនទៅកាន់:</p>
+                            <p class="text-right truncate" title="${order.customerAddress}">${safeAddress}</p>
+                        </div>
+                    </div>
+
+                    <!-- Payment Instruction & QR Section -->
+                    <div class="p-6 bg-yellow-50 rounded-xl shadow-inner text-center border-l-4 border-yellow-500">
+                        <h4 class="font-extrabold text-2xl text-yellow-800 mb-3">ត្រូវតែផ្ទេរប្រាក់</h4>
+                        <p class="text-lg text-yellow-700 mb-4">ចំនួនទឹកប្រាក់សរុបដែលត្រូវបង់:</p>
+                        <p class="font-black text-5xl text-red-600 mb-6">\$${order.total.toFixed(2)}</p>
+                        
+                        <!-- Placeholder QR Code for Payment -->
+                        <img src="https://placehold.co/250x250/f59e0b/ffffff?text=SCAN+TO+PAY" alt="Payment QR Code" class="mx-auto border-4 border-yellow-300 rounded-lg shadow-xl">
+                        <p class="mt-3 text-sm text-gray-600 font-semibold">ប្រើលេខសម្គាល់ការបញ្ជាទិញ <span class="font-mono text-red-600">${orderId.substring(0, 10)}...</span> ជាឯកសារយោង។</p>
+                    </div>
+
+                    <!-- Receipt Upload Section -->
+                    <div class="p-4 bg-gray-100 rounded-xl border border-gray-300 space-y-3 shadow-md">
+                        <h4 class="font-bold text-lg text-gray-800 flex items-center">
+                            <svg class="w-5 h-5 mr-2 text-secondary-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 014 4v2a3 3 0 00-3 3v3h-2v-3a1 1 0 01-1-1v-2h-3v2a1 1 0 01-1 1v3H7a4 4 0 01-4-4v-1a3 3 0 013-3h1"></path></svg>
+                            ផ្ទុកឡើងភស្តុតាងវិក្កយបត្រទូទាត់
+                        </h4>
+                        
+                        <input type="file" id="receipt-upload-input" accept="image/png, image/jpeg" onchange="window.handleReceiptUpload(event)" class="block w-full text-sm text-gray-900 border border-gray-300 rounded-lg cursor-pointer bg-white p-2">
+                        
+                        <p id="upload-status" class="text-sm text-red-600 font-medium">មិនមានឯកសារត្រូវបានជ្រើសរើសទេ។</p>
+                        
+                        <img id="receipt-preview" class="w-full max-h-48 object-contain rounded-lg shadow-inner mt-2 hidden" alt="Receipt Preview">
+                    </div>
+                    
+                    <!-- Confirmation Button -->
+                    <button onclick="window.handlePaymentConfirmation('${orderId}')" class="w-full bg-primary-accent hover:bg-indigo-700 text-white font-black py-4 px-4 rounded-full transition duration-300 shadow-xl mt-6 uppercase tracking-wider">
+                        បញ្ជាក់ការទូទាត់ & ដំណើរការការបញ្ជាទិញ
+                    </button>
+                </div>
+            `;
+        }
+
+        const renderReceipt = (order, orderId) => {
+            const receiptDetails = document.getElementById('receipt-details');
+            if (!receiptDetails) return;
+
+            const orderDate = getOrderDate(order.timestamp).toLocaleString('km-KH');
+            const paymentDate = order.paymentTime ? getOrderDate(order.paymentTime).toLocaleString('km-KH') : 'N/A';
+            const receiptFile = order.receiptFileName || 'មិនមានឯកសារត្រូវបានកត់ត្រា';
+
+            receiptDetails.innerHTML = `
+                <div id="receipt-content" class="p-6 md:p-8 bg-white rounded-2xl shadow-2xl space-y-6">
+                    <div class="text-center border-b pb-4 border-green-200">
+                        <h3 class="text-3xl font-extrabold text-secondary-accent tracking-tight">ជំហានទី ៣: ការបញ្ជាទិញបានបញ្ចប់</h3>
+                        <p class="text-md text-gray-500">សូមអរគុណសម្រាប់ការទិញទំនិញជាមួយពួកយើង!</p>
+                    </div>
+
+                    <!-- Receipt Details Section -->
+                    <div class="p-5 bg-green-50 rounded-xl shadow-inner border-l-4 border-secondary-accent">
+                        <h4 class="font-extrabold text-xl text-secondary-accent mb-4">វិក្កយបត្រពន្ធចុងក្រោយ</h4>
+                        
+                        <div class="grid grid-cols-2 gap-x-4 gap-y-2 text-sm mt-3 border-b pb-3 mb-3 border-dashed">
+                            <div class="col-span-2">
+                                <p class="font-semibold text-gray-700">លេខសម្គាល់ការបញ្ជាទិញ:</p>
+                                <p class="font-mono font-bold text-primary-accent">${orderId}</p>
+                            </div>
+                            <div>
+                                <p class="font-semibold text-gray-700">បានដាក់ការបញ្ជាទិញ:</p>
+                                <p>${orderDate}</p>
+                            </div>
+                            <div class="text-right">
+                                <p class="font-semibold text-gray-700">ដំណើរការទូទាត់:</p>
+                                <p>${paymentDate}</p>
+                            </div>
+                            <div class="col-span-2 mt-2 pt-2 border-t">
+                                <p class="font-semibold text-gray-700">ដឹកជញ្ជូនទៅកាន់:</p>
+                                <p class="font-medium">${order.customerName} - ${order.customerAddress}</p>
+                            </div>
+                        </div>
+
+                        <h5 class="font-bold text-md text-gray-800 mb-2">ទំនិញដែលបានទិញ:</h5>
+                        <ul class="space-y-1 text-sm bg-white p-3 rounded-lg shadow-sm">
+                            ${order.items.map(item => `
+                                <li class="flex justify-between text-gray-700 border-b border-dotted last:border-b-0 py-1">
+                                    <span>${item.name} x ${item.quantity}</span>
+                                    <span class="font-semibold">\$${(item.price * item.quantity).toFixed(2)}</span>
+                                </li>
+                            `).join('')}
+                        </ul>
+
+                        <div class="flex justify-between font-black text-2xl mt-6 pt-4 border-t-2 border-primary-accent">
+                            <span>បានបង់សរុប</span>
+                            <span class="text-red-600">\$${order.total.toFixed(2)}</span>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // --- Notification and View Control ---
+
+        window.setActiveView = (viewId) => {
+            document.querySelectorAll('.app-view').forEach(view => {
+                view.classList.add('hidden');
+            });
+            document.getElementById(viewId).classList.remove('hidden');
+
+            document.querySelectorAll('.nav-link').forEach(link => {
+                const linkView = link.getAttribute('data-view');
+                const isActive = linkView === viewId || (viewId === 'product-details-page' && linkView === 'home-view');
+                
+                // Sidebar (md:block) links
+                if (link.closest('aside')) {
+                     if (isActive) {
+                        link.classList.add('bg-indigo-700', 'text-white', 'shadow-md');
+                        link.classList.remove('text-indigo-200', 'hover:bg-indigo-600', 'hover:shadow-lg');
+                    } else {
+                        link.classList.remove('bg-indigo-700', 'text-white', 'shadow-md');
+                        link.classList.add('text-indigo-200', 'hover:bg-indigo-600', 'hover:shadow-lg');
+                    }
+                }
+                
+                // Mobile Header links
+                if (link.closest('#mobile-nav')) {
+                     if (isActive) {
+                        link.classList.add('bg-primary-accent', 'text-white');
+                        link.classList.remove('text-gray-700', 'hover:bg-gray-100');
+                    } else {
+                        link.classList.remove('bg-primary-accent', 'text-white');
+                        link.classList.add('text-gray-700', 'hover:bg-gray-100');
+                    }
+                }
+            });
+
+            // Close mobile menu if it's open (optional but helpful)
+            const mobileMenu = document.getElementById('mobile-nav');
+            if(mobileMenu.classList.contains('flex')) {
+                mobileMenu.classList.remove('flex');
+                mobileMenu.classList.add('hidden');
+            }
+        };
+
+        // --- Initialize App on Window Load ---
+        window.onload = () => {
+            window.initFirebase();
+            window.setActiveView('home-view');
+        };
+
+        window.toggleMobileMenu = () => {
+            const mobileNav = document.getElementById('mobile-nav');
+            mobileNav.classList.toggle('hidden');
+            mobileNav.classList.toggle('flex');
+        };
+
+    </script>
+    <style>
+        body {
+            /* Use a light gray background for a clean, modern look */
+            background-color: #f9fafb; /* bg-background-light or bg-gray-50 */
+            font-family: 'Inter', 'Noto Sans Khmer', 'sans-serif';
+            overflow-x: hidden; 
+        }
+        /* Ensure mobile header is always visible and the content scrolls underneath */
+        .mobile-fixed-header {
+            position: sticky;
+            top: 0;
+            z-index: 20;
+        }
+    </style>
+</head>
+<body class="min-h-screen">
+
+    <!-- Custom Notification Box -->
+    <div id="app-notification" class="fixed bottom-4 right-4 p-4 rounded-xl shadow-2xl text-white z-50 transition-transform duration-300 transform translate-y-20"></div>
+    
+    <!-- Mobile Header (Visible below md breakpoint) -->
+    <header class="md:hidden bg-white shadow-lg mobile-fixed-header border-b border-gray-100">
+        <div class="flex justify-between items-center p-4"> 
+            <h1 class="text-2xl font-black text-primary-accent">ហាង Meymey</h1>
+            <div class="flex items-center space-x-4"> 
+                <!-- Cart Icon with Badge -->
+                 <a href="#" class="relative p-2 text-gray-700" onclick="window.setActiveView('cart-view')">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z"></path></svg>
+                    <span id="mobile-cart-count-badge" class="absolute top-0 right-0 bg-red-500 text-white text-xs font-bold w-5 h-5 flex items-center justify-center rounded-full transform scale-0" style="transition: transform 0.2s ease-in-out;">0</span>
+                </a>
+                <!-- Mobile Menu Button -->
+                <button onclick="window.toggleMobileMenu()" class="p-2 rounded-lg text-gray-700 hover:bg-gray-100 transition">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16m-7 6h7"></path></svg>
+                </button>
+            </div>
+        </div>
+        <!-- Mobile Navigation Dropdown -->
+        <nav id="mobile-nav" class="hidden flex-col p-3 bg-gray-50 text-gray-800 shadow-inner border-t border-gray-200">
+            <a href="#" class="nav-link flex items-center p-3 rounded-xl transition duration-300 text-gray-700 hover:bg-gray-100 mb-1"
+               data-view="home-view" onclick="window.setActiveView('home-view')">
+                <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path></svg>
+                ផលិតផល
+            </a>
+            <a href="#" class="nav-link flex items-center p-3 rounded-xl transition duration-300 text-gray-700 hover:bg-gray-100 mb-1"
+               data-view="cart-view" onclick="window.setActiveView('cart-view')">
+                <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z"></path></svg>
+                រទេះទំនិញ
+            </a>
+            <a href="#" class="nav-link flex items-center p-3 rounded-xl transition duration-300 text-gray-700 hover:bg-gray-100 mb-1"
+               data-view="order-history-view" onclick="window.setActiveView('order-history-view')">
+                <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"></path></svg>
+                ប្រវត្តិការបញ្ជាទិញ
+            </a>
+             <a href="#" class="nav-link flex items-center p-3 rounded-xl transition duration-300 text-gray-700 hover:bg-gray-100"
+               data-view="contact-view" onclick="window.setActiveView('contact-view')">
+                <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"></path></svg>
+                ព័ត៌មានទំនាក់ទំនង
+            </a>
+        </nav>
+    </header>
+
+    <div class="flex flex-col md:flex-row min-h-screen">
+
+        <!-- Sidebar Menu (Hidden on small screens, shown on md and up) -->
+        <aside class="hidden md:flex md:w-64 bg-primary-accent p-6 md:flex-col shadow-2xl flex-shrink-0">
+            <h1 class="text-3xl font-black text-white mb-10 text-center">ហាង Meymey</h1>
+
+            <nav class="flex md:flex-col md:space-y-3">
+                <a href="#" class="nav-link flex items-center p-4 rounded-xl transition duration-300 text-white bg-indigo-700 shadow-md"
+                   data-view="home-view" onclick="window.setActiveView('home-view')">
+                    <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path></svg>
+                    ផលិតផល
+                </a>
+                <!-- Cart Link with dynamic count badge -->
+                <a href="#" class="nav-link flex items-center p-4 rounded-xl transition duration-300 text-indigo-200 hover:bg-indigo-600 justify-between hover:shadow-lg"
+                   data-view="cart-view" onclick="window.setActiveView('cart-view')">
+                    <span class="flex items-center">
+                        <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z"></path></svg>
+                        រទេះទំនិញ
+                    </span>
+                    <span id="cart-count-badge" class="bg-secondary-accent text-white text-xs font-bold w-6 h-6 flex items-center justify-center rounded-full ml-2 transform scale-0" style="transition: transform 0.2s ease-in-out;">
+                        0
+                    </span>
+                </a>
+                <a href="#" class="nav-link flex items-center p-4 rounded-xl transition duration-300 text-indigo-200 hover:bg-indigo-600 hover:shadow-lg"
+                   data-view="order-history-view" onclick="window.setActiveView('order-history-view')">
+                    <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"></path></svg>
+                    ប្រវត្តិការបញ្ជាទិញ
+                </a>
+                <a href="#" class="nav-link flex items-center p-4 rounded-xl transition duration-300 text-indigo-200 hover:bg-indigo-600 hover:shadow-lg"
+                   data-view="contact-view" onclick="window.setActiveView('contact-view')">
+                    <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"></path></svg>
+                    ព័ត៌មានទំនាក់ទំនង
+                </a>
+            </nav>
+
+            <div class="mt-auto pt-8 border-t border-indigo-700">
+                <p class="text-xs text-indigo-300">លេខសម្គាល់អ្នកប្រើ: ${userId.substring(0, 10)}...</p>
+            </div>
+        </aside>
+
+        <!-- Main Content Area -->
+        <main class="flex-grow p-4 md:p-8 w-full">
+
+            <!-- 1. Home View (Product List) -->
+            <section id="home-view" class="app-view hidden">
+                <h2 class="text-3xl md:text-4xl font-extrabold text-gray-900 mb-8">ផលិតផលលេចធ្លោ</h2>
+                <div id="product-list" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    <p class="text-gray-500">កំពុងផ្ទុកផលិតផល...</p>
+                </div>
+            </section>
+            
+            <!-- 7. Product Details View (New Dedicated Page) -->
+            <section id="product-details-page" class="app-view hidden max-w-4xl mx-auto">
+                <!-- Back Button to Home -->
+                <button onclick="window.setActiveView('home-view')" class="text-primary-accent hover:text-indigo-700 font-semibold mb-6 flex items-center transition">
+                    <svg class="w-5 h-5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
+                    ត្រឡប់ទៅផលិតផលទាំងអស់
+                </button>
+                <div id="product-details-content" class="bg-white p-6 md:p-10 rounded-2xl shadow-2xl">
+                    <!-- Product details content injected here by showProductDetails -->
+                </div>
+            </section>
+
+            <!-- 2. Cart View -->
+            <section id="cart-view" class="app-view hidden max-w-4xl mx-auto">
+                <h2 class="text-3xl md:text-4xl font-extrabold text-gray-900 mb-6">រទេះទំនិញរបស់អ្នក</h2>
+                <div class="bg-white p-6 rounded-2xl shadow-2xl">
+                    <ul id="cart-items" class="divide-y divide-gray-200">
+                        <!-- Cart items rendered here by JS. -->
+                    </ul>
+                    <div class="mt-8 pt-4 border-t-2 border-dashed border-gray-200 flex justify-between items-center">
+                        <span class="text-xl font-bold text-gray-800 uppercase tracking-wider">តម្លៃសរុប:</span>
+                        <span id="cart-total" class="text-4xl font-black text-red-600">$0.00</span>
+                    </div>
+                    <div class="mt-8">
+                        <button onclick="window.setActiveView('checkout-view')" id="checkout-btn" disabled class="w-full bg-secondary-accent hover:bg-teal-600 text-white font-black py-4 px-4 rounded-full transition duration-300 shadow-xl disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider">
+                            បន្តទៅការទូទាត់ (ជំហានទី ១)
+                        </button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 3. Checkout View (Step 1: Data Entry) -->
+            <section id="checkout-view" class="app-view hidden max-w-xl mx-auto">
+                <h2 class="text-3xl font-extrabold text-gray-900 mb-8 text-center">ជំហានទី ១: ព័ត៌មានលម្អិតនៃការដឹកជញ្ជូន</h2>
+
+                <div class="bg-white p-6 rounded-2xl shadow-2xl space-y-6">
+
+                    <!-- Customer Info Form -->
+                    <div class="space-y-4 p-4 bg-indigo-50 rounded-xl border border-primary-accent border-dashed">
+                        <h3 class="font-bold text-xl text-primary-accent border-b pb-2">ព័ត៌មានអ្នកទទួល និងការដឹកជញ្ជូន</h3>
+                        <div>
+                            <label for="customer-name" class="block text-sm font-medium text-gray-700 mb-1">ឈ្មោះពេញ</label>
+                            <input type="text" id="customer-name" placeholder="បញ្ចូលឈ្មោះរបស់អ្នក" required class="w-full p-3 border-2 border-gray-300 rounded-xl focus:ring-primary-accent focus:border-primary-accent transition">
+                        </div>
+                        <div>
+                            <label for="customer-phone" class="block text-sm font-medium text-gray-700 mb-1">លេខទូរស័ព្ទ</label>
+                            <input type="tel" id="customer-phone" placeholder="ឧ. 85512345678" required class="w-full p-3 border-2 border-gray-300 rounded-xl focus:ring-primary-accent focus:border-primary-accent transition">
+                        </div>
+                        <!-- Delivery Address Field -->
+                        <div>
+                            <label for="customer-address" class="block text-sm font-medium text-gray-700 mb-1">អាសយដ្ឋានដឹកជញ្ជូន</label>
+                            <textarea id="customer-address" rows="3" placeholder="អាសយដ្ឋានផ្លូវ ទីក្រុង ខេត្ត លេខកូដប្រៃសណីយ៍" required class="w-full p-3 border-2 border-gray-300 rounded-xl focus:ring-primary-accent focus:border-primary-accent resize-none transition"></textarea>
+                        </div>
+                    </div>
+
+                    <!-- Order Summary -->
+                    <div class="space-y-4 p-4 bg-gray-50 rounded-xl border border-gray-200">
+                        <h3 class="font-extrabold text-xl text-gray-800 border-b pb-2">សង្ខេបការបញ្ជាទិញ</h3>
+                        <div id="checkout-summary" class="text-sm">
+                            <!-- Summary loaded by renderCart -->
+                        </div>
+                    </div>
+                    
+                    <div class="flex flex-col sm:flex-row space-y-3 sm:space-y-0 sm:space-x-4">
+                        <!-- Go Back to Cart Button -->
+                        <button onclick="window.showCartView()" class="sm:w-1/3 bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold py-3 px-4 rounded-full transition duration-300 shadow-md flex items-center justify-center">
+                            <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
+                            ត្រឡប់
+                        </button>
+
+                        <!-- Place Order Button -->
+                        <button onclick="window.handleCheckout()" class="sm:w-2/3 bg-primary-accent hover:bg-indigo-700 text-white font-black py-3 px-4 rounded-full transition duration-300 shadow-xl uppercase tracking-wider">
+                            បន្តទៅការទូទាត់ (ជំហានទី ២)
+                        </button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 4. Payment View (Step 2: Awaiting Payment) -->
+            <section id="payment-view" class="app-view hidden max-w-xl mx-auto">
+                <span id="current-order-id" class="hidden">N/A</span> 
+                
+                <h2 class="text-3xl font-extrabold text-gray-900 mb-4">ជំហានទី ២: បញ្ចប់ការទូទាត់របស់អ្នក</h2>
+                
+                <div id="payment-details">
+                    <p class="text-center text-gray-500 bg-white p-6 rounded-2xl shadow-lg">
+                        Payment instructions will appear here after completing Step 1.
+                    </p>
+                </div>
+            </section>
+
+            <!-- 5. Receipt View (Step 3: Confirmation) -->
+            <section id="receipt-view" class="app-view hidden max-w-xl mx-auto">
+                <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6">
+                    <h2 class="text-2xl sm:text-3xl font-extrabold text-gray-900 mb-2 sm:mb-0">ជំហានទី ៣: វិក្កយបត្រចុងក្រោយ</h2>
+                    <button id="receipt-download-pdf-btn" onclick="window.generatePDFInvoice('N/A', 'receipt-content')" class="bg-red-500 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-full text-sm flex items-center shadow-lg transition duration-300 mt-2 sm:mt-0">
+                        <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                        ទាញយក PDF
+                    </button>
+                </div>
+
+                <div id="receipt-details">
+                    <p class="text-center text-gray-500 bg-white p-6 rounded-2xl shadow-lg">
+                        Your final receipt will appear here after completing Step 2.
+                    </p>
+                </div>
+            </section>
+            
+            <!-- 6. Order History View -->
+            <section id="order-history-view" class="app-view hidden max-w-xl mx-auto">
+                <h2 class="text-3xl md:text-4xl font-extrabold text-gray-900 mb-6">ប្រវត្តិការបញ្ជាទិញរបស់អ្នក</h2>
+                <ul id="order-list" class="space-y-4">
+                    <p class="text-gray-500">កំពុងផ្ទុកប្រវត្តិការបញ្ជាទិញ...</p>
+                </ul>
+            </section>
+            
+            <!-- 7. Contact View (New Section) -->
+            <section id="contact-view" class="app-view hidden max-w-xl mx-auto">
+                <h2 class="text-3xl md:text-4xl font-extrabold text-gray-900 mb-8">ព័ត៌មានទំនាក់ទំនងរបស់ហាង</h2>
+                <div class="bg-white p-8 rounded-2xl shadow-2xl border-t-4 border-secondary-accent space-y-6">
+                    
+                    <div class="text-center mb-6">
+                        <h3 class="text-3xl font-black text-primary-accent">ហាងលក់សម្លៀកបំពាក់ Meymey</h3>
+                        <p class="text-gray-500 mt-1">តែងតែត្រៀមខ្លួនជាស្រេចដើម្បីបម្រើអ្នក</p>
+                    </div>
+
+                    <div class="space-y-4">
+                        
+                        <!-- Phone -->
+                        <div class="flex items-center p-3 bg-gray-50 rounded-xl border border-gray-200">
+                            <svg class="w-6 h-6 mr-4 text-secondary-accent flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"></path></svg>
+                            <div>
+                                <p class="text-sm text-gray-500">លេខទូរស័ព្ទ</p>
+                                <p class="font-bold text-gray-800">012 345 678</p>
+                            </div>
+                        </div>
+
+                        <!-- Email -->
+                        <div class="flex items-center p-3 bg-gray-50 rounded-xl border border-gray-200">
+                            <svg class="w-6 h-6 mr-4 text-secondary-accent flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path></svg>
+                            <div>
+                                <p class="text-sm text-gray-500">អ៊ីមែល</p>
+                                <p class="font-bold text-gray-800">support@meymey.com.kh</p>
+                            </div>
+                        </div>
+
+                        <!-- Address -->
+                        <div class="flex items-start p-3 bg-gray-50 rounded-xl border border-gray-200">
+                            <svg class="w-6 h-6 mr-4 mt-1 text-secondary-accent flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                            <div>
+                                <p class="text-sm text-gray-500">អាសយដ្ឋាន</p>
+                                <p class="font-bold text-gray-800">ផ្ទះលេខ 25, ផ្លូវ 105, សង្កាត់បឹងកេងកង 1, រាជធានីភ្នំពេញ</p>
+                            </div>
+                        </div>
+                        
+                        <!-- Hours -->
+                        <div class="flex items-center p-3 bg-gray-50 rounded-xl border border-gray-200">
+                            <svg class="w-6 h-6 mr-4 text-secondary-accent flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                            <div>
+                                <p class="text-sm text-gray-500">ម៉ោងធ្វើការ</p>
+                                <p class="font-bold text-gray-800">ចន្ទ - សុក្រ: 8:00 ព្រឹក - 6:00 ល្ងាច</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <p class="text-center text-xs text-gray-400 pt-4 border-t">សូមទំនាក់ទំនងមកយើងខ្ញុំប្រសិនបើមានសំណួរ ឬកង្វល់ណាមួយ!</p>
+                </div>
+            </section>
+
+        </main>
+    </div>
+
+</body>
+</html>
